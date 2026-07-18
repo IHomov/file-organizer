@@ -76,7 +76,19 @@ if (command === 'scan') {
     }
   });
 
-  fileScanner.scan(path.resolve(targetDir));
+fileScanner.scan(path.resolve(targetDir)).catch((error) => {
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+    
+    if (error.code === 'ENOENT') {
+      console.error(`❌ Error: Directory not found: ${path.resolve(targetDir)}`);
+    } else if (error.code === 'EACCES') {
+      console.error(`❌ Error: Permission denied: ${path.resolve(targetDir)}`);
+    } else {
+      console.error(`❌ Unexpected error: ${error.message}`);
+    }
+    process.exit(1);
+  });
 
 } else if (command === 'duplicates') {
   const targetDir = args[1];
