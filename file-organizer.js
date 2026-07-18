@@ -2,6 +2,7 @@ import path from 'path';
 import { Scanner } from './lib/scanner.js';
 import { DuplicateFinder } from './lib/duplicates.js';
 import { Organizer } from './lib/organizer.js';
+import { Cleanup } from './lib/cleanup.js';
 
 const args = process.argv.slice(2);
 const command = args[0]; 
@@ -198,6 +199,70 @@ if (command === 'scan') {
     });
   });
 
+} else if (command === 'cleanup') {
+  const targetDir = args[1];
+  const olderThanIdx = args.indexOf('--older-than');
+  const confirmDelete = args.includes('--confirm');
+
+  if (!targetDir || olderThanIdx === -1 || !args[olderThanIdx + 1]) {
+    console.log('Error: Invalid usage. Expected syntax:');
+    console.log('node file-organizer.js cleanup <directory> --older-than <days> [--confirm]');
+    process.exit(1);
+  }
+
+  const thresholdDays = parseInt(args[olderThanIdx + 1], 10);
+  if (isNaN(thresholdDays)) {
+    console.log('Error: --older-than parameter must be a valid number of days.');
+    process.exit(1);
+  }
+
+  const resolvedPath = path.resolve(targetDir);
+  console.log(`Cleanup: ${resolvedPath}`);
+  console.log(`Looking for files older than ${thresholdDays} days...`);
+  process.stdout.write('Analyzing directory structure... ');
+
+  gatherFiles(resolvedPath).then((fileList) => {
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+
+    const cleaner = new Cleanup();
+
+    cleaner.on('cleanup-complete', (result) => {
+      if (result.totalFiles === 0) {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('No files matched the cleanup criteria.');
+        return;
+      }
+
+      console.log(`\nFound ${result.totalFiles} files to delete:\n`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      result.filesFound.forEach(file => {
+        console.log(`${file.name}`);
+        console.log(`  Size: ${formatBytes(file.size)}`);
+        console.log(`  Modified: ${file.daysOld} days ago (${file.formattedDate})`);
+        console.log('');
+      });
+
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`Total: ${result.totalFiles} files (${formatBytes(result.totalSize)})`);
+
+      if (!result.confirmDelete) {
+        console.log('\nDRY RUN MODE: No files were deleted.');
+        console.log('To actually delete these files, run with --confirm flag.');
+      } else {
+        console.log(`\nDELETING ${result.totalFiles} files (${formatBytes(result.totalSize)}). This action cannot be undone!`);
+        console.log('Deleting...');
+        console.log('\nCleanup complete!');
+        console.log(`Deleted: ${result.deletedCount} files (${formatBytes(result.freedSpace)} freed)`);
+      }
+    });
+
+    cleaner.runCleanup(fileList, thresholdDays, confirmDelete).catch(err => {
+      console.error(`\nFatal error during cleanup execution: ${err.message}`);
+    });
+  });
+
 } else {
-  console.log('Error: Unknown command. Available commands: scan, duplicates, organize');
+  console.log('Error: Unknown command. Available commands: scan, duplicates, organize, cleanup');
 }
