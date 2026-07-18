@@ -1,10 +1,10 @@
 import path from 'path';
 import { Scanner } from './lib/scanner.js';
 import { DuplicateFinder } from './lib/duplicates.js';
+import { Organizer } from './lib/organizer.js';
 
 const args = process.argv.slice(2);
 const command = args[0]; 
-const targetDir = args[1]; 
 
 function formatBytes(bytes) {
   if (bytes === 0) return '0 Bytes';
@@ -14,7 +14,6 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Internal helper to gather files via Scanner without printing scan reports
 function gatherFiles(directoryPath) {
   return new Promise((resolve) => {
     const scanner = new Scanner();
@@ -26,6 +25,7 @@ function gatherFiles(directoryPath) {
 }
 
 if (command === 'scan') {
+  const targetDir = args[1];
   if (!targetDir) {
     console.log('Error: Please provide a directory path.');
     process.exit(1);
@@ -78,6 +78,7 @@ if (command === 'scan') {
   fileScanner.scan(path.resolve(targetDir));
 
 } else if (command === 'duplicates') {
+  const targetDir = args[1];
   if (!targetDir) {
     console.log('Error: Please provide a directory path.');
     process.exit(1);
@@ -97,7 +98,6 @@ if (command === 'scan') {
     }
 
     const finder = new DuplicateFinder();
-
     process.stdout.write(`Calculating hashes... 0/${fileList.length} files`);
 
     finder.on('file-processed', ({ currentCount }) => {
@@ -125,7 +125,6 @@ if (command === 'scan') {
         console.log('');
         
         group.files.forEach(filePath => {
-          // Displaying paths relative to execution dir or full path for clarity
           console.log(`  ${filePath}`);
         });
         
@@ -139,6 +138,66 @@ if (command === 'scan') {
     finder.findDuplicates(fileList);
   });
 
+} else if (command === 'organize') {
+  const sourceDir = args[1];
+  const outputIdx = args.indexOf('--output');
+  const outputDir = outputIdx !== -1 ? args[outputIdx + 1] : null;
+
+  if (!sourceDir || !outputDir) {
+    console.log('Error: Invalid usage. Expected syntax:');
+    console.log('node file-organizer.js organize <source-dir> --output <target-dir>');
+    process.exit(1);
+  }
+
+  const resolvedSource = path.resolve(sourceDir);
+  const resolvedOutput = path.resolve(outputDir);
+
+  console.log(`Organizing: ${resolvedSource}`);
+  console.log(`Target: ${resolvedOutput}\n`);
+  console.log('Creating folders...');
+  console.log('  ✓ Documents/');
+  console.log('  ✓ Images/');
+  console.log('  ✓ Archives/');
+  console.log('  ✓ Code/');
+  console.log('  ✓ Videos/');
+  console.log('  ✓ Other/\n');
+
+  process.stdout.write('Gathering file list... ');
+
+  gatherFiles(resolvedSource).then((fileList) => {
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+
+    if (fileList.length === 0) {
+      console.log('No files found to organize.');
+      return;
+    }
+
+    const organizer = new Organizer();
+
+    organizer.on('copy-complete', ({ currentCount }) => {
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+      process.stdout.write(`Copying files... ${currentCount}/${fileList.length}`);
+    });
+
+    organizer.organize(fileList, resolvedOutput).then((result) => {
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+
+      console.log('\nOrganization complete!\n');
+      console.log('Summary:');
+      
+      for (const [category, data] of Object.entries(result.stats)) {
+        console.log(`  ${category.padEnd(11)}: ${data.count.toString().padEnd(4)} files -> ${data.path}`);
+      }
+
+      console.log(`\nTotal copied: ${result.totalFiles} files (${formatBytes(result.totalSize)})`);
+    }).catch(err => {
+      console.error(`\nFatal error during organization: ${err.message}`);
+    });
+  });
+
 } else {
-  console.log('Error: Unknown command. Available commands: scan, duplicates');
+  console.log('Error: Unknown command. Available commands: scan, duplicates, organize');
 }
