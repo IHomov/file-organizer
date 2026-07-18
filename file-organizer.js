@@ -1,17 +1,28 @@
 import path from 'path';
 import { Scanner } from './lib/scanner.js';
+import { DuplicateFinder } from './lib/duplicates.js';
 
 const args = process.argv.slice(2);
 const command = args[0]; 
 const targetDir = args[1]; 
 
-// Helper function to format sizes into human-readable units
 function formatBytes(bytes) {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Internal helper to gather files via Scanner without printing scan reports
+function gatherFiles(directoryPath) {
+  return new Promise((resolve) => {
+    const scanner = new Scanner();
+    const files = [];
+    scanner.on('file-found', ({ file }) => files.push(file));
+    scanner.on('scan-complete', () => resolve(files));
+    scanner.scan(directoryPath).catch(() => resolve([]));
+  });
 }
 
 if (command === 'scan') {
@@ -27,7 +38,6 @@ if (command === 'scan') {
     process.stdout.write('Processing... ');
   });
 
-  // Dynamic counter display in console
   fileScanner.on('file-found', ({ currentCount }) => {
     process.stdout.clearLine(0);
     process.stdout.cursorTo(0);
@@ -67,6 +77,68 @@ if (command === 'scan') {
 
   fileScanner.scan(path.resolve(targetDir));
 
+} else if (command === 'duplicates') {
+  if (!targetDir) {
+    console.log('Error: Please provide a directory path.');
+    process.exit(1);
+  }
+
+  const resolvedPath = path.resolve(targetDir);
+  console.log(`Searching for duplicates in: ${resolvedPath}`);
+  process.stdout.write('Gathering file list... ');
+
+  gatherFiles(resolvedPath).then((fileList) => {
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+
+    if (fileList.length === 0) {
+      console.log('No files found to process.');
+      return;
+    }
+
+    const finder = new DuplicateFinder();
+
+    process.stdout.write(`Calculating hashes... 0/${fileList.length} files`);
+
+    finder.on('file-processed', ({ currentCount }) => {
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+      process.stdout.write(`Calculating hashes... ${currentCount}/${fileList.length} files`);
+    });
+
+    finder.on('duplicates-found', ({ duplicateGroups, totalWastedSpace }) => {
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+
+      console.log(`\nFound ${duplicateGroups.length} duplicate groups (${formatBytes(totalWastedSpace)} wasted):`);
+
+      if (duplicateGroups.length === 0) {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('No duplicate files found.');
+        return;
+      }
+
+      duplicateGroups.forEach((group, index) => {
+        console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log(`Group ${index + 1} (${group.copiesCount} copies, ${formatBytes(group.singleFileSize)} each):`);
+        console.log(`  SHA-256: ${group.hash.substring(0, 12)}...`);
+        console.log('');
+        
+        group.files.forEach(filePath => {
+          // Displaying paths relative to execution dir or full path for clarity
+          console.log(`  ${filePath}`);
+        });
+        
+        console.log(`\n  Wasted space: ${formatBytes(group.wastedSpace)}`);
+      });
+
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`Total wasted space: ${formatBytes(totalWastedSpace)}`);
+    });
+
+    finder.findDuplicates(fileList);
+  });
+
 } else {
-  console.log('Error: Unknown command. Available commands: scan');
+  console.log('Error: Unknown command. Available commands: scan, duplicates');
 }
